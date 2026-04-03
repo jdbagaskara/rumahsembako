@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(php -l \"c:\\\\xampp-8\\\\htdocs\\\\tokoanin\\\\report_harian.php\")",
+      "Bash(php -l \"c:\\\\xampp-8\\\\htdocs\\\\tokoanin\\\\report_bulanan.php\")",
+      "Bash(grep -n \"CREATE TABLE.*products\" *.sql)",
+      "Bash(grep -n \"expiry\\\\|expire\\\\|kadaluarsa\" *.sql)"
+    ]
+  }
+}
