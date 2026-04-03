@@ -40,7 +40,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
     echo json_encode(['ok'=>false]); exit;
 }
 
-$products = $conn->query("SELECT p.id, p.code, p.name, p.stock, p.price_sell, u.name as base_unit, c.name as cat_name FROM products p LEFT JOIN units u ON p.base_unit_id = u.id LEFT JOIN categories c ON p.category_id = c.id ORDER BY p.name ASC");
+$products = $conn->query("SELECT p.id, p.code, p.name, p.stock,
+                                  COALESCE(pup.price_sell, p.price_sell) as price_sell,
+                                  u.name as base_unit, c.name as cat_name
+                           FROM products p
+                           LEFT JOIN units u ON p.base_unit_id = u.id
+                           LEFT JOIN categories c ON p.category_id = c.id
+                           LEFT JOIN product_unit_prices pup ON pup.product_id = p.id AND pup.unit_id = p.base_unit_id
+                           ORDER BY p.name ASC");
 $prod_list = [];
 while ($p = $products->fetch_assoc()) { $prod_list[] = $p; }
 
@@ -67,7 +74,7 @@ $(document).ready(function(){
 function findProduct(id){ return products.find(p => p.id == id); }
 
 function addProductToCart(pid) {
-    var existing = cart.find(c => c.pid == pid);
+    var existing = cart.find(c => c.pid == pid && c.unit_id == c.unit_id);
     if(existing) {
         var maxQty = existing.stock * existing.multiplier;
         if(existing.qty >= maxQty) { alert("Stok tidak cukup! Tersedia: "+existing.stock+" "+existing.base_unit); return; }
@@ -77,12 +84,13 @@ function addProductToCart(pid) {
     if(!prod) return;
     $.getJSON("api_get_units.php?product_id="+pid, function(units){
         var baseUnit = units.find(u => u.multiplier == 1);
-        var basePrice = parseFloat(prod.price_sell) || 0;
         var initMult = baseUnit ? 1 : units[0].multiplier;
+        // Use unit-specific price if available, otherwise use base price / multiplier
+        var initPrice = baseUnit && baseUnit.price_sell > 0 ? baseUnit.price_sell : (units[0].price_sell > 0 ? units[0].price_sell : parseFloat(prod.price_sell));
         cart.push({
             pid: pid, code: prod.code, name: prod.name,
-            base_price: basePrice,
-            price: Math.round(basePrice / initMult),
+            base_price: parseFloat(prod.price_sell) || 0,
+            price: initPrice,
             qty: 1,
             unit_id: baseUnit ? baseUnit.unit_id : units[0].unit_id,
             unit_name: baseUnit ? baseUnit.unit_name : units[0].unit_name,
@@ -102,7 +110,10 @@ function renderCart() {
     cart.forEach(function(item, idx){
         var sub = item.qty * item.price; total += sub;
         var usel = \'<select class="form-select form-select-sm" style="font-size:11px;padding:4px 8px;height:30px;border-radius:4px;" onchange="changeUnit(\'+idx+\',this)">\';
-        item.units.forEach(function(u){ usel += \'<option value="\'+u.unit_id+\'" data-mult="\'+u.multiplier+\'" data-name="\'+u.unit_name+\'" \'+(u.unit_id==item.unit_id?"selected":"")+\'>\'+u.unit_name+\'</option>\'; });
+        item.units.forEach(function(u){
+            var priceDisplay = u.price_sell > 0 ? \' (@Rp \'+u.price_sell.toLocaleString("id-ID")+\') : \'\';
+            usel += \'<option value="\'+u.unit_id+\'" data-mult="\'+u.multiplier+\'" data-name="\'+u.unit_name+\'" \'+(u.unit_id==item.unit_id?"selected":"")+\'>\'+u.unit_name+priceDisplay+\'</option>\';
+        });
         usel += \'</select>\';
 
         html += \'<div style="border-bottom:1px solid #f1f5f9;padding:12px;">\';
@@ -131,7 +142,24 @@ function renderCart() {
     $("#cart_count").text(cart.length + " item");
 }
 
-function changeUnit(idx,sel){var o=sel.options[sel.selectedIndex];cart[idx].unit_id=parseInt(o.value);cart[idx].unit_name=o.dataset.name;var newMult=parseFloat(o.dataset.mult);cart[idx].multiplier=newMult;cart[idx].price=Math.round(cart[idx].base_price/newMult);var maxQ=cart[idx].stock*newMult;if(cart[idx].qty>maxQ)cart[idx].qty=Math.max(1,Math.floor(maxQ));renderCart();}
+function changeUnit(idx,sel){
+    var o=sel.options[sel.selectedIndex];
+    cart[idx].unit_id=parseInt(o.value);
+    cart[idx].unit_name=o.dataset.name;
+    var newMult=parseFloat(o.dataset.mult);
+    cart[idx].multiplier=newMult;
+    // Find the unit-specific price from the units array
+    var unitData = cart[idx].units.find(u => u.unit_id == cart[idx].unit_id);
+    if(unitData && unitData.price_sell > 0) {
+        cart[idx].price = unitData.price_sell;
+    } else {
+        // Fallback to auto-calculate if no unit-specific price
+        cart[idx].price = Math.round(cart[idx].base_price / newMult);
+    }
+    var maxQ=cart[idx].stock*newMult;
+    if(cart[idx].qty>maxQ)cart[idx].qty=Math.max(1,Math.floor(maxQ));
+    renderCart();
+}
 function changeQty(idx,d){var nq=cart[idx].qty+d;var maxQ=cart[idx].stock*cart[idx].multiplier;if(nq>maxQ){alert("Stok tidak cukup! Max: "+Math.floor(maxQ)+" "+cart[idx].unit_name);return;}cart[idx].qty=Math.max(1,nq);renderCart();}
 function setQty(idx,v){var nq=parseFloat(v)||1;var maxQ=cart[idx].stock*cart[idx].multiplier;if(nq>maxQ){alert("Stok tidak cukup! Max: "+Math.floor(maxQ)+" "+cart[idx].unit_name);nq=Math.floor(maxQ);}cart[idx].qty=Math.max(1,nq);renderCart();}
 function removeItem(idx){cart.splice(idx,1);renderCart();}
